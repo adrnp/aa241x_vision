@@ -7,6 +7,8 @@
 
 #include <ros/ros.h>
 
+#include <camera_info_manager.h>
+
 // raspberry pi cam and image handling
 #include <raspicam/raspicam_cv.h>
 #include <image_transport/image_transport.h>
@@ -16,11 +18,13 @@
 // apriltag library
 extern "C" {
 #include <apriltag/apriltag.h>
+#include <apriltag/apriltag_pose.h>
 #include <apriltag/tag16h5.h>
 }
 
 // topics
 #include <geometry_msgs/PoseStamped.h>
+#include <sensor_msgs/CameraInfo.h>
 
 
 /**
@@ -37,7 +41,7 @@ public:
 	 * @param frame_height  the integer height of the image frame in pixels
 	 * @param publish_image boolean flag for whether or not to publish the images
 	 */
-	VisionNode(int frame_width, int frame_height, bool publish_image);
+	VisionNode(sensor_msgs::CameraInfo cam_info, bool publish_image, int tag_id, float tag_size);
 
 
 	/**
@@ -46,6 +50,7 @@ public:
 	 */
 	int run();
 
+	inline void setDebug(bool debug) { _debug = debug; };
 
 private:
 
@@ -53,11 +58,13 @@ private:
 	ros::NodeHandle _nh;
 	image_transport::ImageTransport _it;
 
+	int _tag_id;			// the id of the tag to compute a range estimate to
+	float _tag_size;
+
+	bool _debug = false;	// true to add debug data to the image when publishing
 
 	// settings, etc
-	int _frame_width;		// image width to use in [px]
-	int _frame_height;		// image height to use in [px]
-	bool _publish_image;	// true if the image data should be published
+	sensor_msgs::CameraInfo _camera_info;
 
 	// camera stuff
 	raspicam::RaspiCam_Cv _camera;	// the camera object
@@ -66,12 +73,15 @@ private:
 	ros::Publisher _tag_relative_position_pub;	// the relative position vector to the truck (NOT IMPLEMENTED)
 	ros::Publisher _tag_details_pub;			// the raw tag details (for debugging) (NOT IMPLEMENTED)
 	image_transport::Publisher _image_pub;		// the raw annotated image (for debugging)
+
+
+	void annotateImage(cv::Mat image);
 };
 
 
-VisionNode::VisionNode(int frame_width, int frame_height, bool publish_image) :
-_frame_width(frame_width),
-_frame_height(frame_height),
+VisionNode::VisionNode(sensor_msgs::CameraInfo cam_info, bool publish_image, int tag_id) :
+_camera_info(cam_info),
+_tag_id(tag_id),
 _it(_nh)
 {
 	// publishers
@@ -80,9 +90,9 @@ _it(_nh)
 
 
     // configure the camera
-    _camera.set(cv::CAP_PROP_FORMAT, CV_8UC1);				// 8 bit image data -> means grayscale image
-    _camera.set(cv::CAP_PROP_FRAME_WIDTH, _frame_width);	// set the width of the image
-	_camera.set(cv::CAP_PROP_FRAME_HEIGHT, _frame_height);	// set the height of the image
+    _camera.set(cv::CAP_PROP_FORMAT, CV_8UC1);					// 8 bit image data -> means grayscale image
+    _camera.set(cv::CAP_PROP_FRAME_WIDTH, _camera_info.width);		// set the width of the image
+	_camera.set(cv::CAP_PROP_FRAME_HEIGHT, _camera_info.height);	// set the height of the image
 }
 
 
@@ -107,6 +117,16 @@ int VisionNode::run() {
     td->quad_sigma = 0.0;
     td->refine_edges = 0;
     //td->decode_sharpening = 0.25;
+
+
+    // initialize the detection information with the general info
+    apriltag_detection_info_t info;
+	info.tagsize = _tag_size;
+	info.fx = _camera_info.K[0];
+	info.fy = _camera_info.K[4];
+	info.cx = _camera_info.K[2];
+	info.cy = _camera_info.K[5];
+
 
 	ros::Time image_time; 	// timestamp of when the image was grabbed
 	cv::Mat frame_gray;		// the image in grayscale
@@ -140,33 +160,43 @@ int VisionNode::run() {
             for (int i = 0; i < zarray_size(detections); i++) {
                 apriltag_detection_t *det;
                 zarray_get(detections, i, &det);
-                line(frame_gray, cv::Point(det->p[0][0], det->p[0][1]),
-                         cv::Point(det->p[1][0], det->p[1][1]),
-                         cv::Scalar(0, 0xff, 0), 2);
-                line(frame_gray, cv::Point(det->p[0][0], det->p[0][1]),
-                         cv::Point(det->p[3][0], det->p[3][1]),
-                         cv::Scalar(0, 0, 0xff), 2);
-                line(frame_gray, cv::Point(det->p[1][0], det->p[1][1]),
-                         cv::Point(det->p[2][0], det->p[2][1]),
-                         cv::Scalar(0xff, 0, 0), 2);
-                line(frame_gray, cv::Point(det->p[2][0], det->p[2][1]),
-                         cv::Point(det->p[3][0], det->p[3][1]),
-                         cv::Scalar(0xff, 0, 0), 2);
 
-                std::stringstream ss;
-                ss << det->id;
-                cv::String text = ss.str();
-                int fontface = cv::FONT_HERSHEY_SCRIPT_SIMPLEX;
-                double fontscale = 1.0;
-                int baseline;
-                cv::Size textsize = cv::getTextSize(text, fontface, fontscale, 2,
-                                                &baseline);
-                cv::putText(frame_gray, text, cv::Point(det->c[0]-textsize.width/2,
-                                           det->c[1]+textsize.height/2),
-                        fontface, fontscale, cv::Scalar(0xff, 0x99, 0), 2);
+
+                if (id != _tag_id) {
+                	continue;
+                }
+
+                // set the detection to the detection info
+                info.det = det;
+
+				// Then call estimate_tag_pose
+				apriltag_pose_t pose;
+				double err = estimate_tag_pose(&info, &pose);
+
+				// get the range information
+				float rx = pose.t->data[0];
+				float ry = pose.t->data[1];
+				float rz = pose.t->data[2];
+
+				// TODO: publish the range information
+				geometry_msgs::PoseStamped range_msg;
+				range_msg.pose.position.x = rx;
+				range_msg.pose.position.y = ry;
+				range_msg.pose.position.z = rz;
+
+				// TODO: use the rotation matrix to compute the heading of the tag
+				// TODO: this would allow you to align yourself with the tag, but we will ignore this for now
+
+				// publish the range message
+				_tag_relative_position_pub.publish(range_msg);
+
+				if (_debug) {
+					annotateImage(image, det);
+				}
+
             }
 
-			// publish the annotated image
+			// publish the image
 			std_msgs::Header header;
 			header.stamp = image_time;
 			sensor_msgs::ImagePtr img_msg = cv_bridge::CvImage(header, "mono8", frame_gray).toImageMsg();
@@ -193,6 +223,23 @@ int VisionNode::run() {
 
 }
 
+void VisionNode::annotateImage(cv::Mat image, apriltag_detection_t *det) {
+	line(image, cv::Point(det->p[0][0], det->p[0][1]), cv::Point(det->p[1][0], det->p[1][1]), cv::Scalar(0, 0xff, 0), 2);
+	line(image, cv::Point(det->p[0][0], det->p[0][1]), cv::Point(det->p[3][0], det->p[3][1]), cv::Scalar(0, 0, 0xff), 2);
+	line(image, cv::Point(det->p[1][0], det->p[1][1]), cv::Point(det->p[2][0], det->p[2][1]), cv::Scalar(0xff, 0, 0), 2);
+	line(image, cv::Point(det->p[2][0], det->p[2][1]), cv::Point(det->p[3][0], det->p[3][1]), cv::Scalar(0xff, 0, 0), 2);
+
+	std::stringstream ss;
+	ss << det->id;
+	cv::String text = ss.str();
+
+	int fontface = cv::FONT_HERSHEY_SCRIPT_SIMPLEX;
+	double fontscale = 1.0;
+	int baseline;
+	cv::Size textsize = cv::getTextSize(text, fontface, fontscale, 2, &baseline);
+	cv::putText(image, text, cv::Point(det->c[0]-textsize.width/2, det->c[1]+textsize.height/2), fontface, fontscale, cv::Scalar(0xff, 0x99, 0), 2);
+}
+
 
 // the main function
 
@@ -204,14 +251,30 @@ int main(int argc, char **argv) {
 
 	// get parameters from the launch file which define some camera settings
 	ros::NodeHandle private_nh("~");
-	int frame_width, frame_height;
-	bool publish_image;
-	private_nh.param("frame_width", frame_width, 640);
-	private_nh.param("frame_height", frame_height, 512);
-	private_nh.param("publish_image", publish_image, false);
+	tag_id;
+	float tag_size;
+	bool debug;
+	std::string camera_url;
+	std::string camera_name;
+	private_nh.param("camera_name", camera_name, std::string("pi1280x720"));
+	private_nh.param("camera_url", camera_url, std::string("package://aa241x_vision/camera_info/pi1280x720.yaml"));
+	private_nh.param("debug", debug, false);
+	private_nh.param("tag_id", tag_id, 0);
+	private_nh.param("tag_size", tag_size, 0.09);
+
+	// use the camera manager to load up the configuration
+	camera_info_manager::CameraInfoManager manager(private_nh, camera_name, camera_url);
+
+	if (!manager.loadCameraInfo(camera_url)) {
+		ROS_ERROR("no calibration file found");
+		return EXIT_FAILURE;
+	}
+
+	sensor_msgs::CameraInfo cam_info = manager.getCameraInfo();
 
 	// create the node
-	VisionNode node(frame_width, frame_height, publish_image);
+	VisionNode node(cam_info, tag_id, tag_size);
+	node.setDebug(debug);
 
 	// run the node
 	return node.run();
