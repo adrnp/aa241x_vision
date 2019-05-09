@@ -180,6 +180,7 @@ int VisionNode::run() {
 
 				// TODO: publish the range information
 				geometry_msgs::PoseStamped range_msg;
+				range_msgs.header.stamp = ros::Time::now();
 				range_msg.pose.position.x = rx;
 				range_msg.pose.position.y = ry;
 				range_msg.pose.position.z = rz;
