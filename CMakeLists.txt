@@ -13,6 +13,7 @@ find_package(catkin REQUIRED COMPONENTS
   std_msgs
   cv_bridge
   image_transport
+  camera_info_manager
 )
 
 ## System dependencies are found with CMake's conventions
@@ -115,7 +116,7 @@ catkin_package(
 #  INCLUDE_DIRS include
 #  LIBRARIES aa241x_vision
 #  CATKIN_DEPENDS roscpp rospy std_msgs
-#  DEPENDS system_lib
+  DEPENDS camera_info_manager
 )
 
 ###########
@@ -125,7 +126,7 @@ catkin_package(
 ## Specify additional locations of header files
 ## Your package locations should be listed before other locations
 include_directories(
-# include
+#  include
   ${catkin_INCLUDE_DIRS}
 )
 

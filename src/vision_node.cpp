@@ -7,7 +7,7 @@
 
 #include <ros/ros.h>
 
-#include <camera_info_manager.h>
+#include <camera_info_manager/camera_info_manager.h>
 
 // raspberry pi cam and image handling
 #include <raspicam/raspicam_cv.h>
@@ -41,7 +41,7 @@ public:
 	 * @param frame_height  the integer height of the image frame in pixels
 	 * @param publish_image boolean flag for whether or not to publish the images
 	 */
-	VisionNode(sensor_msgs::CameraInfo cam_info, bool publish_image, int tag_id, float tag_size);
+	VisionNode(sensor_msgs::CameraInfo cam_info, int tag_id, float tag_size);
 
 
 	/**
@@ -75,13 +75,14 @@ private:
 	image_transport::Publisher _image_pub;		// the raw annotated image (for debugging)
 
 
-	void annotateImage(cv::Mat image);
+	void annotateImage(cv::Mat image, apriltag_detection_t* det);
 };
 
 
-VisionNode::VisionNode(sensor_msgs::CameraInfo cam_info, bool publish_image, int tag_id) :
+VisionNode::VisionNode(sensor_msgs::CameraInfo cam_info, int tag_id, float tag_size) :
 _camera_info(cam_info),
 _tag_id(tag_id),
+_tag_size(tag_size),
 _it(_nh)
 {
 	// publishers
@@ -155,54 +156,53 @@ int VisionNode::run() {
         // NOTE: this is where the relative vector should be computed
 
         // if flagged to do so, annotate and publish the image
-		if (_publish_image) {
-            // Draw detection outlines
-            for (int i = 0; i < zarray_size(detections); i++) {
-                apriltag_detection_t *det;
-                zarray_get(detections, i, &det);
+
+        for (int i = 0; i < zarray_size(detections); i++) {
+            apriltag_detection_t *det;
+            zarray_get(detections, i, &det);
 
 
-                if (id != _tag_id) {
-                	continue;
-                }
-
-                // set the detection to the detection info
-                info.det = det;
-
-				// Then call estimate_tag_pose
-				apriltag_pose_t pose;
-				double err = estimate_tag_pose(&info, &pose);
-
-				// get the range information
-				float rx = pose.t->data[0];
-				float ry = pose.t->data[1];
-				float rz = pose.t->data[2];
-
-				// TODO: publish the range information
-				geometry_msgs::PoseStamped range_msg;
-				range_msgs.header.stamp = ros::Time::now();
-				range_msg.pose.position.x = rx;
-				range_msg.pose.position.y = ry;
-				range_msg.pose.position.z = rz;
-
-				// TODO: use the rotation matrix to compute the heading of the tag
-				// TODO: this would allow you to align yourself with the tag, but we will ignore this for now
-
-				// publish the range message
-				_tag_relative_position_pub.publish(range_msg);
-
-				if (_debug) {
-					annotateImage(image, det);
-				}
-
+            if (det->id != _tag_id) {
+            	continue;
             }
 
-			// publish the image
-			std_msgs::Header header;
-			header.stamp = image_time;
-			sensor_msgs::ImagePtr img_msg = cv_bridge::CvImage(header, "mono8", frame_gray).toImageMsg();
-			_image_pub.publish(img_msg);
-		}
+            // set the detection to the detection info
+            info.det = det;
+
+			// Then call estimate_tag_pose
+			apriltag_pose_t pose;
+			double err = estimate_tag_pose(&info, &pose);
+
+			// get the range information
+			float rx = pose.t->data[0];
+			float ry = pose.t->data[1];
+			float rz = pose.t->data[2];
+
+			// TODO: publish the range information
+			geometry_msgs::PoseStamped range_msg;
+			range_msg.header.stamp = ros::Time::now();
+			range_msg.pose.position.x = rx;
+			range_msg.pose.position.y = ry;
+			range_msg.pose.position.z = rz;
+
+			// TODO: use the rotation matrix to compute the heading of the tag
+			// TODO: this would allow you to align yourself with the tag, but we will ignore this for now
+
+			// publish the range message
+			_tag_relative_position_pub.publish(range_msg);
+
+            // Draw detection outlines
+			if (_debug) {
+				annotateImage(frame_gray, det);
+			}
+
+        }
+
+		// publish the image
+		std_msgs::Header header;
+		header.stamp = image_time;
+		sensor_msgs::ImagePtr img_msg = cv_bridge::CvImage(header, "mono8", frame_gray).toImageMsg();
+		_image_pub.publish(img_msg);
 
         // clean up the detections
         zarray_destroy(detections);
@@ -252,7 +252,7 @@ int main(int argc, char **argv) {
 
 	// get parameters from the launch file which define some camera settings
 	ros::NodeHandle private_nh("~");
-	tag_id;
+	int tag_id;
 	float tag_size;
 	bool debug;
 	std::string camera_url;
@@ -261,7 +261,7 @@ int main(int argc, char **argv) {
 	private_nh.param("camera_url", camera_url, std::string("package://aa241x_vision/camera_info/pi1280x720.yaml"));
 	private_nh.param("debug", debug, false);
 	private_nh.param("tag_id", tag_id, 0);
-	private_nh.param("tag_size", tag_size, 0.09);
+	private_nh.param("tag_size", tag_size, 0.09f);
 
 	// use the camera manager to load up the configuration
 	camera_info_manager::CameraInfoManager manager(private_nh, camera_name, camera_url);
