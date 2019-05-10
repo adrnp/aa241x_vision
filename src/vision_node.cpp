@@ -151,7 +151,7 @@ int VisionNode::run() {
 
         // run the detector
 		zarray_t *detections = apriltag_detector_detect(td, &im);
-        ROS_INFO("%d tags detected", zarray_size(detections));
+//        ROS_INFO("%d tags detected", zarray_size(detections));
 
         // NOTE: this is where the relative vector should be computed
 
@@ -160,7 +160,6 @@ int VisionNode::run() {
         for (int i = 0; i < zarray_size(detections); i++) {
             apriltag_detection_t *det;
             zarray_get(detections, i, &det);
-
 
             if (det->id != _tag_id) {
             	continue;
