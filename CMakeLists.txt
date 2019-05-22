@@ -145,7 +145,7 @@ include_directories(
 ## The recommended prefix ensures that target names across packages don't collide
 # add_executable(${PROJECT_NAME}_node src/aa241x_vision_node.cpp)
 #add_executable(control_node src/control_node.cpp)
-add_executable(vision_node src/vision_node.cpp)
+add_executable(vision_node src/vision_node.cpp src/tagAA241x.c)
 add_executable(display_node src/display_node.cpp)
 
 ## Rename C++ executable without prefix

@@ -22,7 +22,9 @@
 extern "C" {
 #include <apriltag/apriltag.h>
 #include <apriltag/apriltag_pose.h>
-#include <apriltag/tag16h5.h>
+//#include <apriltag/tag16h5.h>
+//#include <apriltag/tag36h11.h>
+#include "tagAA241x.h"
 }
 
 // topics
@@ -112,11 +114,13 @@ int VisionNode::run() {
 
     // apriltag handling setup
     // see readme for details: https://github.com/AprilRobotics/apriltag
-	apriltag_family_t *tf = tag16h5_create();	// specify the tag family
+	apriltag_family_t *tf16 = tag16h5_create();	    // add the 16 tag family
+	apriltag_family_t *tf36 = tag36h11_create();	// add the 36 tag family
 
 	// initialize the detector and some attributes for detection
 	apriltag_detector_t *td = apriltag_detector_create();
-    apriltag_detector_add_family(td, tf);
+    apriltag_detector_add_family(td, tf16);
+    apriltag_detector_add_family(td, tf36);
     td->quad_decimate = 3.0;
     td->quad_sigma = 0.0;
     td->refine_edges = 0;
@@ -164,9 +168,13 @@ int VisionNode::run() {
             apriltag_detection_t *det;
             zarray_get(detections, i, &det);
 
+            // NOTE: ideally at this point the only detections should be of
+            // the set of interest
+            /*
             if (det->id != _tag_id) {
             	continue;
             }
+            */
 
             // set the detection to the detection info
             info.det = det;
@@ -181,20 +189,25 @@ int VisionNode::run() {
 			float rz = pose.t->data[2];
 
 			// get the orientation data
-			tf::Matrix3x3 rot(pos.R->[0], pos.R->[1], pos.R->[2],
-							  pos.R->[3], pos.R->[4], pos.R->[5],
-							  pos.R->[6], pos.R->[7], pos.R->[8]);
+			tf::Matrix3x3 rot(pose.R->data[0], pose.R->data[1], pose.R->data[2],
+							  pose.R->data[3], pose.R->data[4], pose.R->data[5],
+							  pose.R->data[6], pose.R->data[7], pose.R->data[8]);
 
 			double roll, pitch, yaw;
 			rot.getRPY(roll, pitch, yaw);
-			ROS_INFO("orientation: (%0.2f, %0.2f, %0.2f)", roll*180.0f/3.14f, pitch*180.0f/3.14f, yaw*180.0f/3.14f);
+			// ROS_INFO("orientation: (%0.2f, %0.2f, %0.2f)", roll*180.0f/3.14f, pitch*180.0f/3.14f, yaw*180.0f/3.14f);
 
-			// TODO: publish the range information
+			// publish the range information
 			geometry_msgs::PoseStamped range_msg;
 			range_msg.header.stamp = ros::Time::now();
 			range_msg.pose.position.x = rx;
 			range_msg.pose.position.y = ry;
 			range_msg.pose.position.z = rz;
+
+            // also add the yaw information -> this is really abusing the message
+            // type, but oh well
+            range_msg.pose.orientation.z = yaw;
+
 
 			// TODO: use the rotation matrix to compute the heading of the tag
 			// TODO: this would allow you to align yourself with the tag, but we will ignore this for now
@@ -231,7 +244,8 @@ int VisionNode::run() {
 
     // remove apriltag stuff
 	apriltag_detector_destroy(td);
-	tag16h5_destroy(tf);
+	tag16h5_destroy(tf16);
+	tag36h11_destroy(tf36);
 
 }
 

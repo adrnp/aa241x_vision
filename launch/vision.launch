@@ -1,14 +1,18 @@
 <launch>
 
 	<!-- launch file level arguments (can be specified as command line arguments on launch) -->
-	<arg name="frame_width" default="640" doc="the width of the image frame to read and display in [px]" />
-	<arg name="frame_height" default="480" doc="the height of the image frame to read and display in [px]" />
+	<arg name="frame_width" default="1280" doc="the width of the image frame to read and display in [px]" />
+	<arg name="frame_height" default="720" doc="the height of the image frame to read and display in [px]" />
+    <arg name="tag_id" default="0" doc="tid of the tag to identify" />
+    <arg name="tag_size" default="0.09" doc="size of the tag" />
 
 	<!-- start the vision node with specifying the frame width and height and enabling the video display (publishes images for the display node to use) -->
     <node pkg="aa241x_vision" type="vision_node" name="vision_node" output="screen" required="true">
         <param name="frame_width" value="$(arg frame_width)" />
         <param name="frame_height" value="$(arg frame_height)" />
         <param name="debug" value="true" />
+        <param name="tag_id" value="$(arg tag_id)" />
+        <param name="tag_size" value="$(arg tag_size)" />
     </node>
 
     <!-- start the display node for displaying the images -->
