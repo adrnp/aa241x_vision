@@ -15,6 +15,9 @@
 #include <opencv2/highgui/highgui.hpp>
 #include <cv_bridge/cv_bridge.h>
 
+// frame transformations
+#include <tf/transform_datatypes.h>
+
 // apriltag library
 extern "C" {
 #include <apriltag/apriltag.h>
@@ -176,6 +179,15 @@ int VisionNode::run() {
 			float rx = pose.t->data[0];
 			float ry = pose.t->data[1];
 			float rz = pose.t->data[2];
+
+			// get the orientation data
+			tf::Matrix3x3 rot(pos.R->[0], pos.R->[1], pos.R->[2],
+							  pos.R->[3], pos.R->[4], pos.R->[5],
+							  pos.R->[6], pos.R->[7], pos.R->[8]);
+
+			double roll, pitch, yaw;
+			rot.getRPY(roll, pitch, yaw);
+			ROS_INFO("orientation: (%0.2f, %0.2f, %0.2f)", roll*180.0f/3.14f, pitch*180.0f/3.14f, yaw*180.0f/3.14f);
 
 			// TODO: publish the range information
 			geometry_msgs::PoseStamped range_msg;
