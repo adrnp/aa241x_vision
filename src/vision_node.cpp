@@ -78,7 +78,7 @@ private:
 	ros::Publisher _tag_details_pub;			// the raw tag details (for debugging) (NOT IMPLEMENTED)
 	image_transport::Publisher _image_pub;		// the raw annotated image (for debugging)
 
-
+    void publishTagPose(apriltag_pose_t* pose);
 	void annotateImage(cv::Mat image, apriltag_detection_t* det);
 };
 
@@ -98,6 +98,39 @@ _it(_nh)
     _camera.set(cv::CAP_PROP_FORMAT, CV_8UC1);					// 8 bit image data -> means grayscale image
     _camera.set(cv::CAP_PROP_FRAME_WIDTH, _camera_info.width);		// set the width of the image
 	_camera.set(cv::CAP_PROP_FRAME_HEIGHT, _camera_info.height);	// set the height of the image
+}
+
+void VisionNode::publishTagPose(apriltag_pose_t* pose) {
+    // get the range information
+	float rx = pose->t->data[0];
+	float ry = pose->t->data[1];
+	float rz = pose->t->data[2];
+
+	// get the orientation data
+	tf::Matrix3x3 rot(pose->R->data[0], pose->R->data[1], pose->R->data[2],
+					  pose->R->data[3], pose->R->data[4], pose->R->data[5],
+					  pose->R->data[6], pose->R->data[7], pose->R->data[8]);
+
+
+	double roll, pitch, yaw;
+	rot.getRPY(roll, pitch, yaw);
+
+	// ROS_INFO("orientation: (%0.2f, %0.2f, %0.2f)", roll*180.0f/3.14f, pitch*180.0f/3.14f, yaw*180.0f/3.14f);
+
+	// populate the range information
+	geometry_msgs::PoseStamped range_msg;
+	range_msg.header.stamp = ros::Time::now();
+	range_msg.pose.position.x = rx;
+	range_msg.pose.position.y = ry;
+	range_msg.pose.position.z = rz;
+
+    // also add the yaw information -> this is really abusing the message
+    // type, but oh well
+    range_msg.pose.orientation.z = yaw;
+
+	// publish the range message
+	_tag_relative_position_pub.publish(range_msg);
+
 }
 
 
@@ -167,54 +200,33 @@ int VisionNode::run() {
             apriltag_detection_t *det;
             zarray_get(detections, i, &det);
 
-            // NOTE: ideally at this point the only detections should be of
-            // the set of interest
-            /*
-            if (det->id != _tag_id) {
-            	continue;
+            // want to only consider the tags / families of interest
+            if (det->family->nbits == 16) {          // 16h5 family
+                // only care about tags 0, 1, 2, and 3
+                if (det->id > 3) {
+                    continue;
+                }
+
+            } else if (det->family->nbits == 36) {   // 36h11 family
+                // only care about tag 9                
+                if (det->id != 9) {
+                    continue;
+                }
+
+                // NOTE: for now only publish the detection for the 36 tag
+
+                // set the detection to the detection info
+                info.det = det;
+
+			    // Then call estimate_tag_pose
+			    apriltag_pose_t pose;
+			    double err = estimate_tag_pose(&info, &pose);
+
+                // publish the information
+                publishTagPose(&pose);
             }
-            */
 
-            // set the detection to the detection info
-            info.det = det;
-
-			// Then call estimate_tag_pose
-			apriltag_pose_t pose;
-			double err = estimate_tag_pose(&info, &pose);
-
-			// get the range information
-			float rx = pose.t->data[0];
-			float ry = pose.t->data[1];
-			float rz = pose.t->data[2];
-
-			// get the orientation data
-			tf::Matrix3x3 rot(pose.R->data[0], pose.R->data[1], pose.R->data[2],
-							  pose.R->data[3], pose.R->data[4], pose.R->data[5],
-							  pose.R->data[6], pose.R->data[7], pose.R->data[8]);
-
-			double roll, pitch, yaw;
-			rot.getRPY(roll, pitch, yaw);
-			// ROS_INFO("orientation: (%0.2f, %0.2f, %0.2f)", roll*180.0f/3.14f, pitch*180.0f/3.14f, yaw*180.0f/3.14f);
-
-			// publish the range information
-			geometry_msgs::PoseStamped range_msg;
-			range_msg.header.stamp = ros::Time::now();
-			range_msg.pose.position.x = rx;
-			range_msg.pose.position.y = ry;
-			range_msg.pose.position.z = rz;
-
-            // also add the yaw information -> this is really abusing the message
-            // type, but oh well
-            range_msg.pose.orientation.z = yaw;
-
-
-			// TODO: use the rotation matrix to compute the heading of the tag
-			// TODO: this would allow you to align yourself with the tag, but we will ignore this for now
-
-			// publish the range message
-			_tag_relative_position_pub.publish(range_msg);
-
-            // Draw detection outlines
+            // Draw detection outlines -> only for the tags of interest
 			if (_debug) {
 				annotateImage(frame_gray, det);
 			}
