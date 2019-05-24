@@ -27,6 +27,7 @@ extern "C" {
 }
 
 // topics
+#include <std_msgs/UInt8.h>
 #include <geometry_msgs/PoseStamped.h>
 #include <sensor_msgs/CameraInfo.h>
 
@@ -69,14 +70,20 @@ private:
 
 	// settings, etc
 	sensor_msgs::CameraInfo _camera_info;
+	bool _publish_images = false;
 
 	// camera stuff
 	raspicam::RaspiCam_Cv _camera;	// the camera object
+
+	// subscriber
+	ros::Subscriber _mission_element_sub;
 
 	// publishers
 	ros::Publisher _tag_relative_position_pub;	// the relative position vector to the truck (NOT IMPLEMENTED)
 	ros::Publisher _tag_details_pub;			// the raw tag details (for debugging) (NOT IMPLEMENTED)
 	image_transport::Publisher _image_pub;		// the raw annotated image (for debugging)
+
+	void missionElementCallback(const std_msgs::UInt8::ConstPtr& msg);
 
     void publishTagPose(apriltag_pose_t* pose);
 	void annotateImage(cv::Mat image, apriltag_detection_t* det);
@@ -98,6 +105,13 @@ _it(_nh)
     _camera.set(cv::CAP_PROP_FORMAT, CV_8UC1);					// 8 bit image data -> means grayscale image
     _camera.set(cv::CAP_PROP_FRAME_WIDTH, _camera_info.width);		// set the width of the image
 	_camera.set(cv::CAP_PROP_FRAME_HEIGHT, _camera_info.height);	// set the height of the image
+}
+
+void VisionNode::missionElementCallback(const std_msgs::UInt8::ConstPtr& msg) {
+	// if either landing prep or landing, publish the images (to be logged)
+	if (msg->data >= 3) {
+		_publish_images = true;
+	}
 }
 
 void VisionNode::publishTagPose(apriltag_pose_t* pose) {
@@ -208,7 +222,7 @@ int VisionNode::run() {
                 }
 
             } else if (det->family->nbits == 36) {   // 36h11 family
-                // only care about tag 9                
+                // only care about tag 9
                 if (det->id != 9) {
                     continue;
                 }
@@ -233,11 +247,16 @@ int VisionNode::run() {
 
         }
 
-		// publish the image
-		std_msgs::Header header;
-		header.stamp = image_time;
-		sensor_msgs::ImagePtr img_msg = cv_bridge::CvImage(header, "mono8", frame_gray).toImageMsg();
-		_image_pub.publish(img_msg);
+        // if either debug, or in a state where we should publish then publish
+        if (_debug || _publish_images) {
+        	// publish the image
+			std_msgs::Header header;
+			header.stamp = image_time;
+			sensor_msgs::ImagePtr img_msg = cv_bridge::CvImage(header, "mono8", frame_gray).toImageMsg();
+			_image_pub.publish(img_msg);
+        }
+
+
 
         // clean up the detections
         zarray_destroy(detections);
